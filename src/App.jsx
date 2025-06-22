@@ -7,6 +7,8 @@ const PREFIX = "emails/";
 const INDEX_FILE = `${PREFIX}index.json`;
 const FORWARD_TO = "profideutsch.uz@gmail.com";
 
+export default EmailInbox;
+
 exports.handler = async (event) => {
   for (const record of event.Records) {
     const key = decodeURIComponent(record.s3.object.key.replace(/\+/g, " "));
