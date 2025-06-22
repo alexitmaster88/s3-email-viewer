@@ -1,54 +1,101 @@
-const AWS = require("aws-sdk");
-const S3 = new AWS.S3();
-const SES = new AWS.SES({ region: "eu-west-1" });
+import { useEffect, useState } from "react";
 
-const BUCKET = "profideutschinbox";
-const PREFIX = "emails/";
-const INDEX_FILE = `${PREFIX}index.json`;
-const FORWARD_TO = "profideutsch.uz@gmail.com";
+const EmailInbox = () => {
+  const [emails, setEmails] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loggedIn, setLoggedIn] = useState(false);
 
-export default EmailInbox;
+  const fetchEmails = () => {
+    fetch("https://profideutschinbox.s3.eu-west-1.amazonaws.com/emails/index.json")
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setEmails(data);
+        } else if (data.emails) {
+          setEmails(data.emails);
+        }
+      })
+      .catch((err) => console.error("Fetch failed:", err));
+  };
 
-exports.handler = async (event) => {
-  for (const record of event.Records) {
-    const key = decodeURIComponent(record.s3.object.key.replace(/\+/g, " "));
-
-    if (!key.startsWith(PREFIX) || key.endsWith("index.json")) continue;
-
-    const emailObject = await S3.getObject({ Bucket: BUCKET, Key: key }).promise();
-    const emailData = emailObject.Body.toString("utf-8");
-
-    // Forward email to Gmail
-    await SES.sendRawEmail({
-      Destinations: [FORWARD_TO],
-      RawMessage: { Data: emailObject.Body }
-    }).promise();
-
-    // Extract basic email metadata
-    const subject = (emailData.match(/Subject:(.*)/i) || [])[1]?.trim() || "No Subject";
-    const from = (emailData.match(/From:(.*)/i) || [])[1]?.trim() || "Unknown";
-    const date = (emailData.match(/Date:(.*)/i) || [])[1]?.trim() || new Date().toISOString();
-
-    // Fetch current index.json
-    let index = [];
-    try {
-      const indexObject = await S3.getObject({ Bucket: BUCKET, Key: INDEX_FILE }).promise();
-      index = JSON.parse(indexObject.Body.toString("utf-8"));
-    } catch (e) {
-      if (e.code !== "NoSuchKey") throw e;
+  useEffect(() => {
+    if (loggedIn) {
+      fetchEmails();
+      const interval = setInterval(fetchEmails, 30000);
+      return () => clearInterval(interval);
     }
+  }, [loggedIn]);
 
-    // Add new entry
-    index.unshift({ key, subject, from, date, size: record.s3.object.size });
+  const handleDelete = (key) => {
+    alert(`This delete only works if you configure CORS + permissions in S3.\nKey: ${key}`);
+    // You can implement actual deletion using a signed API or IAM-authenticated Lambda
+  };
 
-    // Save updated index.json
-    await S3.putObject({
-      Bucket: BUCKET,
-      Key: INDEX_FILE,
-      Body: JSON.stringify(index, null, 2),
-      ContentType: "application/json"
-    }).promise();
+  if (!loggedIn) {
+    return (
+      <div style={{ padding: "2rem", fontFamily: "Arial" }}>
+        <h2>Email Login</h2>
+        <input
+          type="email"
+          placeholder="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          style={{ marginBottom: "1rem", padding: "0.5rem", width: "100%" }}
+        />
+        <input
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          style={{ marginBottom: "1rem", padding: "0.5rem", width: "100%" }}
+        />
+        <button onClick={() => setLoggedIn(true)} style={{ padding: "0.5rem 1rem" }}>
+          Login
+        </button>
+      </div>
+    );
   }
 
-  return { statusCode: 200, body: "Email processed and indexed." };
+  const filtered = emails.filter((email) =>
+    (email.subject || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (email.from || "").toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  return (
+    <div style={{ padding: "2rem", fontFamily: "Arial" }}>
+      <h1>Inbox</h1>
+      <input
+        type="text"
+        placeholder="Search"
+        value={searchTerm}
+        onChange={(e) => setSearchTerm(e.target.value)}
+        style={{ marginBottom: "1rem", padding: "0.5rem", width: "100%" }}
+      />
+      <ul style={{ listStyle: "none", padding: 0 }}>
+        {filtered.map((email, i) => (
+          <li key={i} style={{ borderBottom: "1px solid #ccc", paddingBottom: "1rem", marginBottom: "1rem" }}>
+            <div><strong>From:</strong> {email.from}</div>
+            <div><strong>Subject:</strong> {email.subject}</div>
+            <div><strong>Date:</strong> {email.date}</div>
+            <a
+              href={`https://profideutschinbox.s3.eu-west-1.amazonaws.com/${email.key}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              download
+            >
+              📥 Download
+            </a>
+            <br />
+            <button onClick={() => handleDelete(email.key)} style={{ marginTop: "0.5rem", backgroundColor: "#f44336", color: "white", border: "none", padding: "0.5rem" }}>
+              🗑 Delete
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 };
+
+export default EmailInbox;
